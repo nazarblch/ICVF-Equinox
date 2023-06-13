@@ -9,7 +9,6 @@ from jaxrl_m.common import TrainState, target_update, nonpytree_field
 import flax
 import flax.linen as nn
 import ml_collections
-from icecream import ic
 import functools
 
 def expectile_loss(adv, diff, expectile=0.8):

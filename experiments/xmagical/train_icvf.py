@@ -1,3 +1,15 @@
+from jaxrl_m.dataset import Dataset
+import pickle
+from ml_collections import config_flags
+from jaxrl_m.evaluation import supply_rng, evaluate, evaluate_with_trajectories
+import wandb
+from jaxrl_m.wandb import setup_wandb, default_wandb_config
+from src import viz_utils as viz
+from src.gc_dataset import GCSDataset
+from src.icvf_networks import icvfs, create_icvf
+from src import icvf_learner as learner
+from jaxrl_m.vision import encoders
+from icvf_envs import xmagical
 import os
 from absl import app, flags
 from functools import partial
@@ -5,30 +17,16 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import flax
-
 import tqdm
-from icvf_envs import xmagical
-
-from jaxrl_m.vision import encoders
-from src import icvf_learner as learner
-from src.icvf_networks import icvfs, create_icvf
-from src.gc_dataset import GCSDataset
-from src import viz_utils as viz
-
-from jaxrl_m.wandb import setup_wandb, default_wandb_config
-import wandb
-from jaxrl_m.evaluation import supply_rng, evaluate, evaluate_with_trajectories
-
-from ml_collections import config_flags
-import pickle
-from jaxrl_m.dataset import Dataset
-from icecream import ic
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_enum('modality', 'gripper', ['gripper', 'shortstick', 'mediumstick', 'longstick'], 'Modality name')
-flags.DEFINE_enum('video_type', 'same', ['same', 'cross', 'all'], 'Type of video data to train on (only modality, all but modality, or all)')
-flags.DEFINE_string('dataset', f'/nfs/kun2/users/dibya/gc_pretraining/buffers/xmagical_replay/', 'Directory containing datasets')
+flags.DEFINE_enum('modality', 'gripper', [
+                  'gripper', 'shortstick', 'mediumstick', 'longstick'], 'Modality name')
+flags.DEFINE_enum('video_type', 'cross', [
+                  'same', 'cross', 'all'], 'Type of video data to train on (only modality, all but modality, or all)')
+flags.DEFINE_string('dataset', f'/home/m_bobrin/CILOT-Research/datasets/x_magical/xmagical_replay_icvf',
+                    'Directory containing datasets')
 
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 
@@ -39,12 +37,15 @@ flags.DEFINE_integer('save_interval', 25000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 64, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 
-flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
+flags.DEFINE_enum('icvf_type', 'multilinear',
+                  list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
+
 
 def update_dict(d, additional):
     d.update(additional)
     return d
+
 
 wandb_config = update_dict(
     default_wandb_config(),
@@ -60,54 +61,62 @@ gcdataset_config = GCSDataset.get_default_config()
 
 config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
-config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
+config_flags.DEFINE_config_dict(
+    'gcdataset', gcdataset_config, lock_config=False)
+
 
 def main(_):
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
 
-    FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
+    FLAGS.save_dir = os.path.join(
+        FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
     os.makedirs(FLAGS.save_dir, exist_ok=True)
-    
+
     if FLAGS.video_type == 'same':
         video_dataset = xmagical.get_dataset(FLAGS.modality, FLAGS.dataset)
     elif FLAGS.video_type == 'cross':
-        video_dataset = xmagical.crossembodiment_dataset(FLAGS.modality, FLAGS.dataset)
+        video_dataset = xmagical.crossembodiment_dataset(
+            FLAGS.modality, FLAGS.dataset)
     elif FLAGS.video_type == 'all':
         video_dataset = xmagical.crossembodiment_dataset(None, FLAGS.dataset)
     else:
         raise ValueError(f'Invalid video type {FLAGS.video_type}')
 
     gc_dataset = GCSDataset(video_dataset, **FLAGS.gcdataset.to_dict())
-    example_batch = gc_dataset.sample(1)
+    example_batch = gc_dataset.sample(1) # (1, 64, 64, 3) - one sample
 
     encoder_def = encoders['impala']()
     hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
-    value_def = create_icvf(FLAGS.icvf_type, encoder=encoder_def, hidden_dims=hidden_dims)
+    value_def = create_icvf(
+        FLAGS.icvf_type, encoder=encoder_def, hidden_dims=hidden_dims)
 
     agent = learner.create_learner(FLAGS.seed,
-                    example_batch['observations'],
-                    value_def,
-                    **FLAGS.config)
+                                   example_batch['observations'],
+                                   value_def,
+                                   **FLAGS.config)
 
     visualizer = DebugPlotGenerator(video_dataset)
 
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
                        dynamic_ncols=True):
-        batch = gc_dataset.sample(FLAGS.batch_size)  
+        batch = gc_dataset.sample(FLAGS.batch_size)
         agent, update_info = agent.update(batch)
 
         if i % FLAGS.log_interval == 0:
             debug_statistics = get_debug_statistics(agent, batch)
-            train_metrics = {f'training/{k}': v for k, v in update_info.items()}
-            train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
+            train_metrics = {f'training/{k}': v for k,
+                             v in update_info.items()}
+            train_metrics.update(
+                {f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
             wandb.log(train_metrics, step=i)
 
         if i % FLAGS.eval_interval == 0:
             visualizations = visualizer.generate_debug_plots(agent)
-            eval_metrics = {f'visualizations/{k}': v for k, v in visualizations.items()}
+            eval_metrics = {f'visualizations/{k}': v for k,
+                            v in visualizations.items()}
             wandb.log(eval_metrics, step=i)
 
         if i % FLAGS.save_interval == 0:
@@ -126,11 +135,12 @@ def main(_):
 # Creates wandb plots
 #
 ###################################################################################################
+
+
 class DebugPlotGenerator:
     def __init__(self, video_dataset):
         first_done = (video_dataset['masks'] == 0).argmax()
         self.traj_batch = video_dataset.get_subset(np.arange(first_done+1))
-        
 
     def generate_debug_plots(self, unrep_agent):
         plot_items = [
@@ -147,7 +157,8 @@ class DebugPlotGenerator:
         ]
 
         metrics = get_distances(unrep_agent, self.traj_batch)
-        img = viz.make_visual(self.traj_batch['observations'], metrics, plot_items)
+        img = viz.make_visual(
+            self.traj_batch['observations'], metrics, plot_items)
         return {'image': wandb.Image(img)}
 
 ###################################################################################################
@@ -155,6 +166,7 @@ class DebugPlotGenerator:
 # Helper functions for visualization
 #
 ###################################################################################################
+
 
 @jax.jit
 def get_debug_statistics(agent, batch):
@@ -193,19 +205,21 @@ def get_debug_statistics(agent, batch):
     })
     return stats
 
+
 @jax.jit
 def get_distances(agent, batch):
     def get_v(o, g):
         v1, v2 = agent.value(o, g, g)
         return v1
-    
-    distances = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(0, None))(batch['observations'], batch['observations'])
 
+    distances = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(
+        0, None))(batch['observations'], batch['observations'])
 
     def get_density(start, o):
         v1, v2 = agent.value(start, o, batch['observations'][-1])
         return v1
-    densities = jax.vmap(jax.vmap(get_density, in_axes=(None, 0)), in_axes=(0, None))(batch['observations'], batch['observations'])
+    densities = jax.vmap(jax.vmap(get_density, in_axes=(None, 0)), in_axes=(
+        0, None))(batch['observations'], batch['observations'])
 
     return {
         'dist_from_beginning': distances[:, 0],
@@ -222,4 +236,3 @@ def get_distances(agent, batch):
 
 if __name__ == '__main__':
     app.run(main)
-

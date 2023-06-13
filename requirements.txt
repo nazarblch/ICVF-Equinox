@@ -1,4 +1,5 @@
-"jax[tpu]==0.3.25" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+#"jax[tpu]==0.3.25" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+jax[cuda11_pip] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 numpy
 flax==0.6.2
 distrax
@@ -6,7 +7,7 @@ icecream
 ml_collections
 tqdm
 wandb
-gym[atari]==0.24.0
+#gym[atari]==0.24.0
 x-magical
 imageio
 moviepy

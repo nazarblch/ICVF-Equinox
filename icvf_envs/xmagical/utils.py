@@ -31,7 +31,7 @@ def get_dataset(modality, dir_name='/nfs/kun2/users/dibya/gc_pretraining/buffers
 def get_all_datasets(dir_name='/nfs/kun2/users/dibya/gc_pretraining/buffers/xmagical'):
     return {modality: get_dataset(modality, dir_name) for modality in ['gripper', 'shortstick', 'mediumstick', 'longstick']}
 
-def crossembodiment_dataset(not_modality, dir_name='/nfs/kun2/users/dibya/gc_pretraining/buffers/xmagical'):
+def crossembodiment_dataset(not_modality, dir_name):
     datasets = []
     keys = ['observations', 'next_observations', 'rewards', 'masks', 'dones_float']
     for i, modality in enumerate(['gripper', 'shortstick', 'mediumstick', 'longstick']):

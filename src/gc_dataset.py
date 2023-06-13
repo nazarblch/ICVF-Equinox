@@ -35,6 +35,7 @@ class GCDataset:
         assert np.isclose(self.p_randomgoal + self.p_trajgoal + self.p_currgoal, 1.0)
 
     def sample_goals(self, indx, p_randomgoal=None, p_trajgoal=None, p_currgoal=None):
+        #indx - intention
         if p_randomgoal is None:
             p_randomgoal = self.p_randomgoal
         if p_trajgoal is None:
@@ -46,7 +47,7 @@ class GCDataset:
         # Random goals
         goal_indx = np.random.randint(self.dataset.size-self.curr_goal_shift, size=batch_size)
         
-        # Goals from the same trajectory
+        # Goals from the same trajectory. Find closest trajectory to goal index
         final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]
         if self.max_distance is not None:
             final_state_indx = np.clip(final_state_indx, 0, indx + self.max_distance)
@@ -62,6 +63,7 @@ class GCDataset:
 
     def sample(self, batch_size: int, indx=None):
         if indx is None:
+            # choose random index from concated obs
             indx = np.random.randint(self.dataset.size-1, size=batch_size)
         
         batch = self.dataset.sample(batch_size, indx)
@@ -106,7 +108,7 @@ class GCSDataset(GCDataset):
             desired_goal_indx = self.sample_goals(indx, p_randomgoal=0.0, p_trajgoal=1.0 - self.p_currgoal, p_currgoal=self.p_currgoal)
         else:
             desired_goal_indx = self.sample_goals(indx)
-        
+        # TODO: When they are not equal?
         goal_indx = self.sample_goals(indx)
         goal_indx = np.where(np.random.rand(batch_size) < self.p_samegoal, desired_goal_indx, goal_indx)
 
