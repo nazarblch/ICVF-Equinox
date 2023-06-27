@@ -108,7 +108,7 @@ class GCSDataset(GCDataset):
             desired_goal_indx = self.sample_goals(indx, p_randomgoal=0.0, p_trajgoal=1.0 - self.p_currgoal, p_currgoal=self.p_currgoal)
         else:
             desired_goal_indx = self.sample_goals(indx)
-        # TODO: When they are not equal?
+        
         goal_indx = self.sample_goals(indx)
         goal_indx = np.where(np.random.rand(batch_size) < self.p_samegoal, desired_goal_indx, goal_indx)
 
