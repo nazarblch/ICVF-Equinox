@@ -11,7 +11,10 @@
             "cwd": "${workspaceFolder}",
             "program": "/home/m_bobrin/icvf_release/experiments/xmagical/train_icvf.py",
             "console": "integratedTerminal",
-            "env": {"PYTHONPATH": "/home/m_bobrin/icvf_release/"},
+            "env": {
+                "PYTHONPATH": "/home/m_bobrin/icvf_release/",
+                "CUDA_VISIBLE_DEVICES": "1, 2, 3"
+            },
             "justMyCode": true
         }
     ]

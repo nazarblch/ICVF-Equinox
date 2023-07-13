@@ -2,7 +2,6 @@ from jaxrl_m.typing import *
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 from jaxrl_m.common import TrainState, target_update, nonpytree_field
 
@@ -15,7 +14,16 @@ def expectile_loss(adv, diff, expectile=0.8):
     weight = jnp.where(adv >= 0, expectile, (1 - expectile))
     return weight * diff ** 2
 
+# def ot_loss(expert_observation_pairs, agent_observation_pairs, cost_fn=ott.geometry.costs.Cosine()):
+#     geom = pointcloud.PointCloud(expert_observation_pairs, agent_observation_pairs, epsilon=epsilon, cost_fn=cost_fn)
+#     ot_prob = linear_problem.LinearProblem(geom, a=expert_trajs_weights, b=agent_traj_weights, tau_a=1., tau_b=0.95)
+#     solver = sinkhorn.Sinkhorn()
 
+#     ot_sink = solver(ot_prob)
+#     transp_cost = jnp.sum(ot_sink.matrix * geom.cost_matrix, axis=0)
+#     pseudo_rewards = -transp_cost
+
+#     return pseudo_rewards, ot_sink.matrix
 
 def icvf_loss(value_fn, target_value_fn, batch, config):
 
@@ -56,6 +64,11 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
     if config['no_intent']:
         adv = jnp.zeros_like(adv)
     
+    # Computing f(s,s') = argmax[V(s, s', z)] over z
+    # z is not differentiable
+    # (f_paired_1, f_paired_2) = target_value_fn(batch['observations'], batch['next_observations'], batch['desired_goals'])
+    # optimal_z = jax.numpy.argmax()
+    
     ###
     #
     # If advantage is positive (next state is better than current state), then place additional weight on
@@ -70,6 +83,12 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
         return (x * mask).sum() / (1e-5 + mask.sum())
 
     advantage = adv
+    # OTT
+    # vectorized_ot_rewards = jax.jit(
+    #     jax.vmap(ot_loss, in_axes=(0, 0, None, None))
+    # )
+    # rewards, P = vectorized_ot_rewards()
+    
     return value_loss, {
         'value_loss': value_loss,
         'v_gz max': v1_gz.max(),
@@ -117,7 +136,6 @@ class ICVFAgent(flax.struct.PyTreeNode):
         else:
             new_target_value = target_update(agent.value, agent.target_value, agent.config['target_update_rate'])
         new_value, value_info = agent.value.apply_loss_fn(loss_fn=value_loss_fn, has_aux=True)
-
         return agent.replace(value=new_value, target_value=new_target_value), value_info
     
 def create_learner(
@@ -139,7 +157,7 @@ def create_learner(
         print('Extra kwargs:', kwargs)
 
         rng = jax.random.PRNGKey(seed)
-
+        
         _, value_params =  value_def.init(rng, observations, observations, observations).pop('params')
         value = TrainState.create(value_def, value_params, tx=optax.adam(**optim_kwargs))
         target_value = TrainState.create(value_def, value_params)

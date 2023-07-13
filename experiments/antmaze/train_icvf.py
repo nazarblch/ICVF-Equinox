@@ -1,4 +1,5 @@
 import os
+
 from absl import app, flags
 from functools import partial
 import numpy as np
@@ -7,20 +8,18 @@ import jax.numpy as jnp
 import flax
 
 import tqdm
+
 from src import icvf_learner as learner
 from src.icvf_networks import icvfs, create_icvf
-from icvf_envs.antmaze import d4rl_utils, d4rl_ant, ant_diagnostics, d4rl_pm
+from icvf_envs.antmaze import d4rl_utils, d4rl_ant, d4rl_pm
 from src.gc_dataset import GCSDataset
 from src import viz_utils
 
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
 import wandb
-from jaxrl_m.evaluation import supply_rng, evaluate, evaluate_with_trajectories
 
 from ml_collections import config_flags
 import pickle
-from jaxrl_m.dataset import Dataset
-from icecream import ic
 
 
 FLAGS = flags.FLAGS

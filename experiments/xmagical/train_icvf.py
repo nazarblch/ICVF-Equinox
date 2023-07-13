@@ -22,7 +22,7 @@ import tqdm
 FLAGS = flags.FLAGS
 flags.DEFINE_enum('modality', 'gripper', [
                   'gripper', 'shortstick', 'mediumstick', 'longstick'], 'Modality name')
-flags.DEFINE_enum('video_type', 'cross', [
+flags.DEFINE_enum('video_type', 'same', [
                   'same', 'cross', 'all'], 'Type of video data to train on (only modality, all but modality, or all)')
 flags.DEFINE_string('dataset', f'/home/m_bobrin/CILOT-Research/datasets/x_magical/xmagical_replay_icvf',
                     'Directory containing datasets')
@@ -30,7 +30,7 @@ flags.DEFINE_string('dataset', f'/home/m_bobrin/CILOT-Research/datasets/x_magica
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
-flags.DEFINE_integer('log_interval', 500, 'Metric logging interval.')
+flags.DEFINE_integer('log_interval', 200, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 25000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 64, 'Mini batch size.')
