@@ -8,7 +8,6 @@ def get_size(data: Data) -> int:
     sizes = tree_util.tree_map(lambda arr: len(arr), data)
     return max(tree_util.tree_leaves(sizes))
 
-
 class Dataset(FrozenDict):
     """
     A class for storing (and retrieving batches of) data in nested dictionary format.
@@ -68,14 +67,10 @@ class Dataset(FrozenDict):
             indx = np.random.randint(self.size, size=batch_size)
         return self.get_subset(indx)
 
-    def get_subset(self, indx, traj: bool = False, traj_len: int = 10):
+    def get_subset(self, indx, traj: bool = False):
         if not traj:
             return tree_util.tree_map(lambda arr: arr[indx], self._dict)
-        traj_dict = defaultdict()
-        boundary_indx = np.clip(indx - traj_len, 0, 999000)
-        for i in range(len(indx)):
-            traj_dict[i] = tree_util.tree_map(lambda arr: arr[boundary_indx[i]:indx[i]], self._dict)
-        return FrozenDict(traj_dict)
+        
 
 class ReplayBuffer(Dataset):
     """

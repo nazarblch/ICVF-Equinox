@@ -5,6 +5,39 @@ import jax
 import jax.numpy as jnp
 import ml_collections
 
+def segment(observations, terminals, max_path_length:int=1000):
+    """
+        segment `observations` into trajectories according to `terminals`
+    """
+    assert len(observations) == len(terminals)
+    observation_dim = observations.shape[1]
+
+    trajectories = [[]]
+    for obs, term in zip(observations, terminals):
+        trajectories[-1].append(obs)
+        if term.squeeze():
+            trajectories.append([])
+
+    if len(trajectories[-1]) == 0:
+        trajectories = trajectories[:-1]
+
+    ## list of arrays because trajectories lengths will be different
+    trajectories = [np.stack(traj, axis=0) for traj in trajectories]
+
+    n_trajectories = len(trajectories)
+    path_lengths = [len(traj) for traj in trajectories]
+
+    ## pad trajectories to be of equal length
+    trajectories_pad = np.zeros((n_trajectories, max_path_length, observation_dim), dtype=trajectories[0].dtype)
+    early_termination = np.zeros((n_trajectories, max_path_length), dtype=np.bool)
+    for i, traj in enumerate(trajectories):
+        path_length = path_lengths[i]
+        trajectories_pad[i,:path_length] = traj
+        early_termination[i,path_length:] = 1
+
+    return trajectories_pad, early_termination, path_lengths
+
+
 @dataclasses.dataclass
 class GCDataset:
     dataset: Dataset
@@ -100,11 +133,11 @@ class GCSDataset(GCDataset):
             'curr_goal_shift': 0,
         })
 
-    def sample_trajectories(self, batch_size: int, trajectory_len: int = 10):
-        terminal_indxes = np.argwhere(self.dataset["dones_float"] > 0.5).squeeze()
-        random_idx = np.random.choice(terminal_indxes, size=batch_size, replace=False)
-        trajs = self.dataset.get_subset(random_idx, traj=True, traj_len=trajectory_len)
-        return trajs
+    def sample_trajectories(self, batch_size: int):
+        joined_states = jnp.concatenate([self.dataset['observations'], self.dataset['next_observations']], axis=-1)
+        trajs = segment(joined_states, self.dataset['dones_float'])
+        chosen_trajs = trajs[0][np.random.randint(trajs[0].shape[0], size=batch_size), ...]
+        return chosen_trajs
     
     def sample(self, batch_size: int, indx=None):
         if indx is None:
