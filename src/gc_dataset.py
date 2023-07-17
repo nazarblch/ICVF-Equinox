@@ -2,6 +2,7 @@ from jaxrl_m.dataset import Dataset
 import dataclasses
 import numpy as np
 import jax
+import jax.numpy as jnp
 import ml_collections
 
 @dataclasses.dataclass
@@ -99,6 +100,12 @@ class GCSDataset(GCDataset):
             'curr_goal_shift': 0,
         })
 
+    def sample_trajectories(self, batch_size: int, trajectory_len: int = 10):
+        terminal_indxes = np.argwhere(self.dataset["dones_float"] > 0.5).squeeze()
+        random_idx = np.random.choice(terminal_indxes, size=batch_size, replace=False)
+        trajs = self.dataset.get_subset(random_idx, traj=True, traj_len=trajectory_len)
+        return trajs
+    
     def sample(self, batch_size: int, indx=None):
         if indx is None:
             indx = np.random.randint(self.dataset.size-1, size=batch_size)

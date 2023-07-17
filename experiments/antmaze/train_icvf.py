@@ -1,4 +1,8 @@
 import os
+os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
+
+import warnings
+warnings.filterwarnings("ignore")
 
 from absl import app, flags
 from functools import partial
