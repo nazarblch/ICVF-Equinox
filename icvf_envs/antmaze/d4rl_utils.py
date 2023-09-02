@@ -6,6 +6,7 @@ from jaxrl_m.dataset import Dataset
 from jaxrl_m.evaluation import EpisodeMonitor
 
 def make_env(env_name: str):
+    #normalize states?
     env = gym.make(env_name)
     env = EpisodeMonitor(env)
     return env

@@ -25,15 +25,14 @@ import wandb
 from ml_collections import config_flags
 import pickle
 
-
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.')
+flags.DEFINE_string('env_name', 'maze2d-umaze-v1', 'Environment name.')
 
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
 
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
-flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
+flags.DEFINE_integer('eval_interval', 1000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
@@ -48,9 +47,9 @@ def update_dict(d, additional):
 wandb_config = update_dict(
     default_wandb_config(),
     {
-        'project': 'icvf_antmaze',
-        'group': 'icvf',
-        'name': '{icvf_type}_{env_name}',
+        'project': 'ICVF_Baseline',
+        'group': 'icvf_baseline',
+        'name': 'rewards_dense_{env_name}',
     }
 )
 
@@ -291,6 +290,7 @@ def get_v_gz(agent, initial_state, target_goal, observations):
 
 @jax.jit
 def get_traj_v(agent, trajectory):
+    # getting value function
     def get_v(s, g):
         return agent.value(s[None], g[None], g[None]).mean()
     observations = trajectory['observations']

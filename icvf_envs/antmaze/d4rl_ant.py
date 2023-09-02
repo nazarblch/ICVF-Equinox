@@ -306,7 +306,8 @@ def gcvalue_image(env, dataset, value_fn):
 
     fig = plt.figure(tight_layout=True)
     canvas = FigureCanvas(fig)
-
+    init_state = (12.5, 8)
+    
     points = [point1, point2, point3, point4]
     for i, point in enumerate(points):
         point = np.array(point)
@@ -314,12 +315,14 @@ def gcvalue_image(env, dataset, value_fn):
 
         goal_observation = base_observation.copy()
         goal_observation[:2] = point
-
+        # intent
+        # base obser - final state
         plot_value(env, dataset, partial(value_fn, goal_observation), fig, ax)
 
-        ax.set_title('Goal: ({:.2f}, {:.2f})'.format(point[0], point[1])) 
+        ax.set_title('Goal: ({:.2f}, {:.2f})'.format(point[0], point[1]))
         ax.scatter(point[0], point[1], s=50, c='red', marker='*')
-
+        ax.scatter(base_observation[0], base_observation[1], s=50, c='red', marker='x')
+        
     image = get_canvas_image(canvas)
     plt.close(fig)
     return image

@@ -8,22 +8,11 @@ from jaxrl_m.common import TrainState, target_update, nonpytree_field
 import flax
 import flax.linen as nn
 import ml_collections
-import functools
 
 def expectile_loss(adv, diff, expectile=0.8):
     weight = jnp.where(adv >= 0, expectile, (1 - expectile))
     return weight * diff ** 2
 
-# def ot_loss(expert_observation_pairs, agent_observation_pairs, cost_fn=ott.geometry.costs.Cosine()):
-#     geom = pointcloud.PointCloud(expert_observation_pairs, agent_observation_pairs, epsilon=epsilon, cost_fn=cost_fn)
-#     ot_prob = linear_problem.LinearProblem(geom, a=expert_trajs_weights, b=agent_traj_weights, tau_a=1., tau_b=0.95)
-#     solver = sinkhorn.Sinkhorn()
-
-#     ot_sink = solver(ot_prob)
-#     transp_cost = jnp.sum(ot_sink.matrix * geom.cost_matrix, axis=0)
-#     pseudo_rewards = -transp_cost
-
-#     return pseudo_rewards, ot_sink.matrix
 
 def icvf_loss(value_fn, target_value_fn, batch, config):
 
@@ -83,12 +72,6 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
         return (x * mask).sum() / (1e-5 + mask.sum())
 
     advantage = adv
-    # OTT
-    # vectorized_ot_rewards = jax.jit(
-    #     jax.vmap(ot_loss, in_axes=(0, 0, None, None))
-    # )
-    # rewards, P = vectorized_ot_rewards()
-    
     return value_loss, {
         'value_loss': value_loss,
         'v_gz max': v1_gz.max(),
@@ -158,7 +141,7 @@ def create_learner(
 
         rng = jax.random.PRNGKey(seed)
         
-        _, value_params =  value_def.init(rng, observations, observations, observations).pop('params')
+        value_params =  value_def.init(rng, observations, observations, observations).pop('params')
         value = TrainState.create(value_def, value_params, tx=optax.adam(**optim_kwargs))
         target_value = TrainState.create(value_def, value_params)
 
