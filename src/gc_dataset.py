@@ -157,13 +157,9 @@ class GCSDataset(GCDataset):
         batch['goals'] = jax.tree_map(lambda arr: arr[goal_indx], self.dataset['observations'])
         batch['desired_goals'] = jax.tree_map(lambda arr: arr[desired_goal_indx], self.dataset['observations'])
         
-        # change to check to euclidean distance
-        # success = (indx == goal_indx)
-        # desired_success = (indx == desired_goal_indx)
+        success = (indx == goal_indx)
+        desired_success = (indx == desired_goal_indx)
 
-        success = (jnp.linalg.norm(batch['observations'][..., :2] - batch['goals'][..., :2], axis=-1) < 0.5).astype(float)
-        desired_success = (jnp.linalg.norm(batch['observations'][..., :2] - batch['desired_goals'][..., :2], axis=-1) < 0.5).astype(float)
-        
         batch['rewards'] = success.astype(float) * self.reward_scale + self.reward_shift
         batch['desired_rewards'] = desired_success.astype(float) * self.reward_scale + self.reward_shift
         

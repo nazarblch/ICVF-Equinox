@@ -11,9 +11,11 @@ import jax
 import jax.numpy as jnp
 import flax
 
+import equinox as eqx
 import tqdm
 
 from src import icvf_learner as learner
+from src.icvf_learner import update, eval_ensemble
 from src.icvf_networks import icvfs, create_icvf
 from icvf_envs.antmaze import d4rl_utils, d4rl_ant, d4rl_pm
 from src.gc_dataset import GCSDataset
@@ -23,19 +25,16 @@ from jaxrl_m.wandb import setup_wandb, default_wandb_config
 import wandb
 
 from ml_collections import config_flags
-import pickle
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'maze2d-umaze-v1', 'Environment name.')
+flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.')
 
-flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
-
-flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
-flags.DEFINE_integer('log_interval', 1000, 'Metric logging interval.')
-flags.DEFINE_integer('eval_interval', 1000, 'Visualization interval.')
-flags.DEFINE_integer('save_interval', 100000, 'Save interval.')
+flags.DEFINE_integer('seed', np.random.choice(300_000), 'Random seed.')
+flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
+flags.DEFINE_integer('eval_interval', 10_000, 'Visualization interval.')
+flags.DEFINE_integer('save_interval', 100_000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(300_000), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
@@ -49,7 +48,7 @@ wandb_config = update_dict(
     {
         'project': 'ICVF_Baseline',
         'group': 'icvf_baseline',
-        'name': 'rewards_dense_{env_name}',
+        'name': 'icvf_eqx_{env_name}_Pretraining',
     }
 )
 
@@ -74,31 +73,33 @@ def main(_):
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
-
-    FLAGS.save_dir = os.path.join(FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
-    os.makedirs(FLAGS.save_dir, exist_ok=True)
     
     env = d4rl_utils.make_env(FLAGS.env_name)
-    dataset = d4rl_utils.get_dataset(env)
+    dataset = d4rl_utils.get_dataset(env, normalize_states=False, normalize_rewards=True)
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
 
     hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
-    value_def = create_icvf(FLAGS.icvf_type, hidden_dims=hidden_dims)
+    agent = learner.create_eqx_learner(FLAGS.seed,
+                                       example_batch['observations'],
+                                       hidden_dims=hidden_dims,
+                                       **FLAGS.config)
+    # value_def = create_icvf(FLAGS.icvf_type, hidden_dims=hidden_dims)
 
-    agent = learner.create_learner(FLAGS.seed,
-                    example_batch['observations'],
-                    value_def,
-                    **FLAGS.config)
-
+    # agent = learner.create_learner(FLAGS.seed,
+    #                 example_batch['observations'],
+    #                 value_def,
+    #                 **FLAGS.config)
+    
     visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
 
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
                        dynamic_ncols=True):
         batch = gc_dataset.sample(FLAGS.batch_size)  
-        agent, update_info = agent.update(batch)
-
+        #agent, update_info = agent.update(batch)
+        agent, update_info = update(agent, batch)
+        
         if i % FLAGS.log_interval == 0:
             debug_statistics = get_debug_statistics(agent, batch)
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
@@ -111,15 +112,9 @@ def main(_):
             wandb.log(eval_metrics, step=i)
 
         if i % FLAGS.save_interval == 0:
-            save_dict = dict(
-                agent=flax.serialization.to_state_dict(agent),
-                config=FLAGS.config.to_dict()
-            )
-
-            fname = os.path.join(FLAGS.save_dir, f'params.pkl')
-            print(f'Saving to {fname}')
-            with open(fname, "wb") as f:
-                pickle.dump(save_dict, f)
+            unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
+            with open("icvf_model.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
 
 ###################################################################################################
 #
@@ -166,7 +161,7 @@ class DebugPlotGenerator:
                 ]
         )
         visualizations['value_traj_viz'] = wandb.Image(value_viz)
-
+    
         if 'maze' in FLAGS.env_name:
             print('Visualizing intent policies and values')
             # Policy visualization
@@ -213,37 +208,38 @@ class DebugPlotGenerator:
 #
 ###################################################################################################
 
-@jax.jit
+@eqx.filter_jit
 def get_values(agent, observations, intent):
     def get_v(observations, intent):
         intent = intent.reshape(1, -1)
         intent_tiled = jnp.tile(intent, (observations.shape[0], 1))
-        v1, v2 = agent.value(observations, intent_tiled, intent_tiled)
+        v1, v2 = eval_ensemble(agent.value_learner.model, observations, intent_tiled, intent_tiled)
         return (v1 + v2) / 2    
     return get_v(observations, intent)
 
-@jax.jit
+@eqx.filter_jit
 def get_policy(agent, observations, intent):
     def v(observations):
         def get_v(observations, intent):
             intent = intent.reshape(1, -1)
             intent_tiled = jnp.tile(intent, (observations.shape[0], 1))
-            v1, v2 = agent.value(observations, intent_tiled, intent_tiled)
+            v1, v2 = eval_ensemble(agent.value_learner.model, observations, intent_tiled, intent_tiled)
             return (v1 + v2) / 2    
             
         return get_v(observations, intent).mean()
 
-    grads = jax.grad(v)(observations)
+    grads = eqx.filter_grad(v)(observations)
     policy = grads[:, :2]
     return policy / jnp.linalg.norm(policy, axis=-1, keepdims=True)
 
-@jax.jit
+@eqx.filter_jit
 def get_debug_statistics(agent, batch):
     def get_info(s, g, z):
         if agent.config['no_intent']:
             return agent.value(s, g, jnp.ones_like(z), method='get_info')
         else:
-            return agent.value(s, g, z, method='get_info')
+            return eval_ensemble(agent.value_learner.model, s, g, z)
+            #return agent.value(s, g, z, method='get_info')
 
     s = batch['observations']
     g = batch['goals']
@@ -264,19 +260,26 @@ def get_debug_statistics(agent, batch):
         stats = {}
 
     stats.update({
-        'v_ssz': info_ssz['v'].mean(),
-        'v_szz': info_szz['v'].mean(),
-        'v_sgz': info_sgz['v'].mean(),
-        'v_sgg': info_sgg['v'].mean(),
-        'v_szg': info_szg['v'].mean(),
-        'diff_szz_szg': (info_szz['v'] - info_szg['v']).mean(),
-        'diff_sgg_sgz': (info_sgg['v'] - info_sgz['v']).mean(),
+        'v_ssz': info_ssz.mean(),
+        'v_szz': info_szz.mean(),
+        'v_sgz': info_sgz.mean(),
+        'v_sgg': info_sgg.mean(),
+        'v_szg': info_szg.mean(),
+        'diff_szz_szg': (info_szz - info_szg).mean(),
+        'diff_sgg_sgz': (info_sgg - info_sgz).mean(),
+        # 'v_ssz': info_ssz['v'].mean(),
+        # 'v_szz': info_szz['v'].mean(),
+        # 'v_sgz': info_sgz['v'].mean(),
+        # 'v_sgg': info_sgg['v'].mean(),
+        # 'v_szg': info_szg['v'].mean(),
+        # 'diff_szz_szg': (info_szz['v'] - info_szg['v']).mean(),
+        # 'diff_sgg_sgz': (info_sgg['v'] - info_sgz['v']).mean(),
     })
     return stats
 
-@jax.jit
+@eqx.filter_jit
 def get_gcvalue(agent, s, g, z):
-    v_sgz_1, v_sgz_2 = agent.value(s, g, z)
+    v_sgz_1, v_sgz_2 = eval_ensemble(agent.value_learner.model, s, g, z)
     return (v_sgz_1 + v_sgz_2) / 2
 
 def get_v_zz(agent, goal, observations):
@@ -288,11 +291,12 @@ def get_v_gz(agent, initial_state, target_goal, observations):
     target_goal = jnp.tile(target_goal, (observations.shape[0], 1))
     return get_gcvalue(agent, initial_state, observations, target_goal)
 
-@jax.jit
+#@jax.jit
+@eqx.filter_jit
 def get_traj_v(agent, trajectory):
-    # getting value function
     def get_v(s, g):
-        return agent.value(s[None], g[None], g[None]).mean()
+        return eval_ensemble(agent.value_learner.model, s[None], g[None], g[None]).mean()
+        #return agent.value(s[None], g[None], g[None]).mean()
     observations = trajectory['observations']
     all_values = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(0, None))(observations, observations)
     return {
