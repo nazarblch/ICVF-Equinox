@@ -9,14 +9,13 @@ from functools import partial
 import numpy as np
 import jax
 import jax.numpy as jnp
-import flax
 
 import equinox as eqx
 import tqdm
 
 from src import icvf_learner as learner
 from src.icvf_learner import update, eval_ensemble
-from src.icvf_networks import icvfs, create_icvf
+from src.icvf_networks import icvfs
 from icvf_envs.antmaze import d4rl_utils, d4rl_ant, d4rl_pm
 from src.gc_dataset import GCSDataset
 from src import viz_utils
@@ -27,7 +26,7 @@ import wandb
 from ml_collections import config_flags
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.')
+flags.DEFINE_string('env_name', 'antmaze-umaze-diverse-v2', 'Environment name.') # antmaze-large-diverse-v2
 
 flags.DEFINE_integer('seed', np.random.choice(300_000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
@@ -113,8 +112,12 @@ def main(_):
 
         if i % FLAGS.save_interval == 0:
             unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
-            with open("icvf_model.eqx", "wb") as f:
+            with open("icvf_model_phi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
+            with open("icvf_model_psi.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.psi_net)
+            with open("icvf_model_T.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.T_net)
 
 ###################################################################################################
 #

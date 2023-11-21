@@ -90,8 +90,6 @@ class GCDataset:
         middle_goal_indx = np.round(((indx) * distance + final_state_indx * (1- distance))).astype(int)
 
         goal_indx = np.where(np.random.rand(batch_size) < p_trajgoal / (1.0 - p_currgoal), middle_goal_indx, goal_indx)
-        
-        # Goals at the current state
         goal_indx = np.where(np.random.rand(batch_size) < p_currgoal, indx, goal_indx)
         return goal_indx
 

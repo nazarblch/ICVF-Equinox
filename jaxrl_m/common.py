@@ -2,12 +2,10 @@ from jaxrl_m.typing import *
 import flax
 import flax.linen as nn
 import jax
-import jax.numpy as jnp
 from jax import tree_util
 import optax
 import functools
 import equinox as eqx
-import equinox.nn as eqxnn
 import dataclasses
 
 nonpytree_field = functools.partial(flax.struct.field, pytree_node=False)

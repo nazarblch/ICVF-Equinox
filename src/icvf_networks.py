@@ -187,11 +187,11 @@ class MultilinearVF_EQX(eqx.Module):
         key, phi_key, psi_key, t_key, matrix_a_key, matrix_b_key = jax.random.split(key, 6)
         network_cls = functools.partial(eqxnn.MLP, in_size=state_dim, out_size=hidden_dims[-1],
                                         width_size=hidden_dims[0], depth=len(hidden_dims),
-                                        final_activation=jax.nn.relu)
+                                        final_activation=jax.nn.gelu)
         self.phi_net = network_cls(key=phi_key)
         self.psi_net = network_cls(key=psi_key)
         self.T_net = eqxnn.MLP(in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], depth=len(hidden_dims),
-                                        final_activation=jax.nn.relu, key=t_key)
+                                        final_activation=jax.nn.gelu, key=t_key)
         self.matrix_a = eqxnn.Linear(in_features=hidden_dims[-1], out_features=hidden_dims[-1], key=matrix_a_key)
         self.matrix_b = eqxnn.Linear(in_features=hidden_dims[-1], out_features=hidden_dims[-1], key=matrix_b_key)
         
