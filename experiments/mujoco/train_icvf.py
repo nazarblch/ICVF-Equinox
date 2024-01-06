@@ -26,14 +26,14 @@ import wandb
 from ml_collections import config_flags
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.') # antmaze-large-diverse-v2
+flags.DEFINE_string('env_name', 'door-human-v0', 'Environment name.')
 
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
-flags.DEFINE_integer('eval_interval', 50_000, 'Visualization interval.')
-flags.DEFINE_integer('save_interval', 300_000, 'Save interval.')
+flags.DEFINE_integer('eval_interval', 30_000, 'Visualization interval.')
+flags.DEFINE_integer('save_interval', 100_000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(1_000_000), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
@@ -74,7 +74,7 @@ def main(_):
     setup_wandb(params_dict, **FLAGS.wandb)
     
     env = d4rl_utils.make_env(FLAGS.env_name)
-    dataset = d4rl_utils.get_dataset(env, normalize_states=False)
+    dataset = d4rl_utils.get_dataset(env)
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
     
@@ -84,36 +84,43 @@ def main(_):
                                        load_pretrained_icvf=False,
                                        hidden_dims=hidden_dims,
                                        **FLAGS.config)
-    visualizer = DebugPlotGenerator(FLAGS.env_name, gc_dataset)
 
+    example_trajectory = dataset.get_subset(np.arange(0, 100))
+    
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
                        dynamic_ncols=True):
         batch = gc_dataset.sample(FLAGS.batch_size)  
         agent, update_info = update(agent, batch)
-            
+        
         if i % FLAGS.log_interval == 0:
             debug_statistics = get_debug_statistics(agent, batch)
             train_metrics = {f'training/{k}': v for k, v in update_info.items()}
             train_metrics.update({f'pretraining/debug/{k}': v for k, v in debug_statistics.items()})
             wandb.log(train_metrics, step=i)
-
+            
         if i % FLAGS.eval_interval == 0:
-            visualizations = visualizer.generate_debug_plots(agent)
-            eval_metrics = {f'visualizations/{k}': v for k, v in visualizations.items()}
-            wandb.log(eval_metrics, step=i)
-
+            visualizations = {}
+            traj_metrics = get_traj_v(agent, example_trajectory)
+            value_viz = viz_utils.make_visual_no_image(traj_metrics, 
+                [
+                partial(viz_utils.visualize_metric, metric_name=k) for k in traj_metrics.keys()
+                    ]
+            )
+            visualizations['value_traj_viz'] = wandb.Image(value_viz)
+            wandb.log(visualizations)
+            
         if i % FLAGS.save_interval == 0:
             unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
-            with open("icvf_model_phi_large.eqx", "wb") as f:
+            with open("icvf_model_phi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
-            with open("icvf_model_psi_large.eqx", "wb") as f:
+            with open("icvf_model_psi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.psi_net)
-            with open("icvf_model_T_large.eqx", "wb") as f:
+            with open("icvf_model_T.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.T_net)
-            with open("icvf_model_a_large.eqx", "wb") as f:
+            with open("icvf_model_a.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_a)
-            with open("icvf_model_b_large.eqx", "wb") as f:
+            with open("icvf_model_b.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_b)
                 
 
@@ -139,15 +146,6 @@ class DebugPlotGenerator:
             self.viz_things = (viz_env, viz_dataset, viz_library, init_state)
         else:
             raise NotImplementedError('Visualization not implemented for this environment')
-
-        # intent_set_indx = np.random.default_rng(0).choice(dataset.size, FLAGS.config.n_intents, replace=False)
-        # Chosen by hand for `antmaze-large-diverse-v2` to get a nice spread of goals, use the above line for random selection
-
-        intent_set_indx = np.array([184588, 62200, 162996, 110214, 4086, 191369, 92549, 12946, 192021])
-        self.intent_set_batch = gc_dataset.sample(9, indx=intent_set_indx)
-        self.example_trajectory = gc_dataset.sample(50, indx=np.arange(1000, 1050))
-
-
 
     def generate_debug_plots(self, agent):
         example_trajectory = self.example_trajectory

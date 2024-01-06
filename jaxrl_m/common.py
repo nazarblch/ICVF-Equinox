@@ -199,6 +199,7 @@ class TrainTargetStateEQX(TrainStateEQX):
         return cls(model=model, optim=optim, optim_state=optim_state, target_model=target_model,
                    **kwargs)
 
+    @eqx.filter_jit
     def soft_update(self, tau: float = 0.005):
         model_params = eqx.filter(self.model, eqx.is_array)
         target_model_params, target_model_static = eqx.partition(self.target_model, eqx.is_array)
@@ -210,6 +211,7 @@ class TrainTargetStateEQX(TrainStateEQX):
             target_model=eqx.combine(new_target_params, target_model_static)
         )
     
+    @eqx.filter_jit
     def apply_updates(self, grads):
         
         updates, new_optim_state = self.optim.update(grads, self.optim_state)

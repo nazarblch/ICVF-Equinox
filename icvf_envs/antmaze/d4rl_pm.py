@@ -74,7 +74,7 @@ class GoalReachingPM(gym.Wrapper):
         return (0, 0), (self.maze_arr.shape[0], self.maze_arr.shape[1])
 
     def XY(self, n=20):
-        bl, tr = self.get_starting_boundary()
+        bl, tr = self.get_starting_boundary() #bot left, top right
         X = np.linspace(bl[0] + 0.04 * (tr[0] - bl[0]) , tr[0] - 0.04 * (tr[0] - bl[0]), n)
         Y = np.linspace(bl[1] + 0.04 * (tr[1] - bl[1]) , tr[1] - 0.04 * (tr[1] - bl[1]), n)
         
@@ -297,7 +297,6 @@ def gcvalue_image(env, dataset, value_fn):
 
         ax.set_title('Goal: ({:.2f}, {:.2f})'.format(point[0], point[1])) 
         ax.scatter(point[0], point[1], s=50, c='red', marker='*')
-        ax.scatter(base_observation[0], base_observation[1], s=50, c='red', marker='x')
         
     image = get_canvas_image(canvas)
     plt.close(fig)

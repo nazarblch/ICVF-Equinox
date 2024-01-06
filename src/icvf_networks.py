@@ -183,18 +183,36 @@ class MultilinearVF_EQX(eqx.Module):
     matrix_a: eqx.Module
     matrix_b: eqx.Module
     
-    def __init__(self, key, state_dim, hidden_dims):
+    def __init__(self, key, state_dim, hidden_dims, pretrained_phi=None, pretrained_psi=None, pretrained_T=None,pretrained_a=None,pretrained_b=None):
         key, phi_key, psi_key, t_key, matrix_a_key, matrix_b_key = jax.random.split(key, 6)
-        network_cls = functools.partial(eqxnn.MLP, in_size=state_dim, out_size=hidden_dims[-1],
-                                        width_size=hidden_dims[0], depth=len(hidden_dims),
-                                        final_activation=jax.nn.gelu)
-        self.phi_net = network_cls(key=phi_key)
-        self.psi_net = network_cls(key=psi_key)
-        self.T_net = eqxnn.MLP(in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], depth=len(hidden_dims),
-                                        final_activation=jax.nn.gelu, key=t_key)
-        self.matrix_a = eqxnn.Linear(in_features=hidden_dims[-1], out_features=hidden_dims[-1], key=matrix_a_key)
-        self.matrix_b = eqxnn.Linear(in_features=hidden_dims[-1], out_features=hidden_dims[-1], key=matrix_b_key)
         
+        network_cls = functools.partial(eqxnn.MLP, in_size=state_dim, out_size=hidden_dims[-1],
+                                        width_size=hidden_dims[0], depth=len(hidden_dims), final_activation=jax.nn.relu)
+            
+        if pretrained_phi is None:
+            self.phi_net = network_cls(key=phi_key)
+        else:
+            self.phi_net = pretrained_phi
+        
+        if pretrained_psi is None:
+            self.psi_net = network_cls(key=psi_key)
+        else:
+            self.psi_net = pretrained_psi
+        
+        T_cls = functools.partial(eqxnn.MLP, in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], depth=len(hidden_dims),
+                                        final_activation=jax.nn.relu)
+        network_cls_a = functools.partial(eqxnn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
+        network_cls_b = functools.partial(eqxnn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
+        
+        if pretrained_T is None:
+            self.T_net = T_cls(key=t_key)
+            self.matrix_a = network_cls_a(key=matrix_a_key)
+            self.matrix_b = network_cls_b(key=matrix_b_key)
+        else:
+            self.T_net = pretrained_T
+            self.matrix_a = pretrained_a
+            self.matrix_b = pretrained_b
+    
     def __call__(self, observations, outcomes, intents):
         phi = self.phi_net(observations)
         psi = self.psi_net(outcomes)

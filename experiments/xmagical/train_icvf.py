@@ -1,13 +1,19 @@
+import os
+import warnings
+
+warnings.filterwarnings("ignore")
+os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
+
 import pickle
 from ml_collections import config_flags
 import wandb
 
 from jaxrl_m.wandb import setup_wandb, default_wandb_config
-from src import viz_utils as viz
 from src.gc_dataset import GCSDataset
-from src.icvf_networks import icvfs, create_icvf
+from src.icvf_learner import update, eval_ensemble
 from src import icvf_learner as learner
 from jaxrl_m.vision import encoders
+from src.icvf_networks import icvfs
 from icvf_envs import xmagical
 import os
 from absl import app, flags
@@ -15,16 +21,19 @@ from functools import partial
 import numpy as np
 import jax
 import jax.numpy as jnp
-import flax
 import tqdm
 
+from src import viz_utils as viz
+
+import equinox as eqx
+import equinox.nn as nn
 
 FLAGS = flags.FLAGS
-flags.DEFINE_enum('modality', 'gripper', [
+flags.DEFINE_enum('modality', 'mediumstick', [
                   'gripper', 'shortstick', 'mediumstick', 'longstick'], 'Modality name')
-flags.DEFINE_enum('video_type', 'same', [
+flags.DEFINE_enum('video_type', 'cross', [
                   'same', 'cross', 'all'], 'Type of video data to train on (only modality, all but modality, or all)')
-flags.DEFINE_string('dataset', f'/home/m_bobrin/CILOT-Research/datasets/x_magical/xmagical_replay_icvf',
+flags.DEFINE_string('dataset', f'/home/m_bobrin/icvf_release/experiments/xmagical/xmagical_replay',
                     'Directory containing datasets')
 
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
@@ -33,13 +42,13 @@ flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 200, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 25000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 25000, 'Save interval.')
-flags.DEFINE_integer('batch_size', 64, 'Mini batch size.')
+flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear',
                   list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
-
+flags.DEFINE_bool('view_mode', False, 'whether to use pixel based or state based.')
 
 def update_dict(d, additional):
     d.update(additional)
@@ -49,8 +58,8 @@ def update_dict(d, additional):
 wandb_config = update_dict(
     default_wandb_config(),
     {
-        'project': 'icvf_xmagical',
-        'group': 'icvf',
+        'project': 'ICVF_Baseline',
+        'group': 'icvf_baseline',
         'name': '{icvf_type}_{modality}_{video_type}',
     }
 )
@@ -60,21 +69,16 @@ gcdataset_config = GCSDataset.get_default_config()
 
 config_flags.DEFINE_config_dict('wandb', wandb_config, lock_config=False)
 config_flags.DEFINE_config_dict('config', config, lock_config=False)
-config_flags.DEFINE_config_dict(
-    'gcdataset', gcdataset_config, lock_config=False)
-
+config_flags.DEFINE_config_dict('gcdataset', gcdataset_config, lock_config=False)
 
 def main(_):
     # Create wandb logger
     params_dict = {**FLAGS.gcdataset.to_dict(), **FLAGS.config.to_dict()}
     setup_wandb(params_dict, **FLAGS.wandb)
-
-    FLAGS.save_dir = os.path.join(
-        FLAGS.save_dir, wandb.run.project, wandb.config.exp_prefix, wandb.config.experiment_id)
-    os.makedirs(FLAGS.save_dir, exist_ok=True)
-
+    if FLAGS.view_mode:
+        keys = ['states', 'next_states', 'rewards', 'masks', 'dones_float']
     if FLAGS.video_type == 'same':
-        video_dataset = xmagical.get_dataset(FLAGS.modality, FLAGS.dataset)
+        video_dataset = xmagical.get_dataset(FLAGS.modality, FLAGS.dataset, keys=keys)
     elif FLAGS.video_type == 'cross':
         video_dataset = xmagical.crossembodiment_dataset(
             FLAGS.modality, FLAGS.dataset)
@@ -84,16 +88,13 @@ def main(_):
         raise ValueError(f'Invalid video type {FLAGS.video_type}')
 
     gc_dataset = GCSDataset(video_dataset, **FLAGS.gcdataset.to_dict())
-    example_batch = gc_dataset.sample(1) # (1, 64, 64, 3) - one sample
+    example_batch = gc_dataset.sample(1)
 
-    encoder_def = encoders['impala']()
     hidden_dims = tuple([int(h) for h in FLAGS.hidden_dims])
-    value_def = create_icvf(
-        FLAGS.icvf_type, encoder=encoder_def, hidden_dims=hidden_dims)
-
-    agent = learner.create_learner(FLAGS.seed,
+    agent = learner.create_eqx_learner(FLAGS.seed,
                                    example_batch['observations'],
-                                   value_def,
+                                   hidden_dims=hidden_dims,
+                                   load_pretrained_icvf=False,
                                    **FLAGS.config)
 
     visualizer = DebugPlotGenerator(video_dataset)
@@ -102,7 +103,7 @@ def main(_):
                        smoothing=0.1,
                        dynamic_ncols=True):
         batch = gc_dataset.sample(FLAGS.batch_size)
-        agent, update_info = agent.update(batch)
+        agent, update_info = update(agent, batch)
 
         if i % FLAGS.log_interval == 0:
             debug_statistics = get_debug_statistics(agent, batch)
@@ -117,18 +118,19 @@ def main(_):
             eval_metrics = {f'visualizations/{k}': v for k,
                             v in visualizations.items()}
             wandb.log(eval_metrics, step=i)
-
+            
         if i % FLAGS.save_interval == 0:
-            save_dict = dict(
-                agent=flax.serialization.to_state_dict(agent),
-                config=FLAGS.config.to_dict()
-            )
-
-            fname = os.path.join(FLAGS.save_dir, f'params.pkl')
-            print(f'Saving to {fname}')
-            with open(fname, "wb") as f:
-                pickle.dump(save_dict, f)
-
+            unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
+            with open("icvf_model_phi.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
+            with open("icvf_model_psi.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.psi_net)
+            with open("icvf_model_T.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.T_net)
+            with open("icvf_model_a.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.matrix_a)
+            with open("icvf_model_b.eqx", "wb") as f:
+                eqx.tree_serialise_leaves(f, unensemble_model.matrix_b)
 ###################################################################################################
 #
 # Creates wandb plots
@@ -157,7 +159,7 @@ class DebugPlotGenerator:
 
         metrics = get_distances(unrep_agent, self.traj_batch)
         img = viz.make_visual(
-            self.traj_batch['observations'], metrics, plot_items)
+            self.traj_batch['images'], metrics, plot_items) #observations
         return {'image': wandb.Image(img)}
 
 ###################################################################################################
@@ -167,13 +169,13 @@ class DebugPlotGenerator:
 ###################################################################################################
 
 
-@jax.jit
+@eqx.filter_jit
 def get_debug_statistics(agent, batch):
     def get_info(s, g, z):
         if agent.config['no_intent']:
             return agent.value(s, g, jnp.ones_like(z), method='get_info')
         else:
-            return agent.value(s, g, z, method='get_info')
+            return eval_ensemble(agent.value_learner.model, s, g, z)
 
     s = batch['observations']
     g = batch['goals']
@@ -194,29 +196,33 @@ def get_debug_statistics(agent, batch):
         stats = {}
 
     stats.update({
-        'v_ssz': info_ssz['v'].mean(),
-        'v_szz': info_szz['v'].mean(),
-        'v_sgz': info_sgz['v'].mean(),
-        'v_sgg': info_sgg['v'].mean(),
-        'v_szg': info_szg['v'].mean(),
-        'diff_szz_szg': (info_szz['v'] - info_szg['v']).mean(),
-        'diff_sgg_sgz': (info_sgg['v'] - info_sgz['v']).mean(),
+        'v_ssz': info_ssz.mean(),
+        'v_szz': info_szz.mean(),
+        'v_sgz': info_sgz.mean(),
+        'v_sgg': info_sgg.mean(),
+        'v_szg': info_szg.mean(),
+        'diff_szz_szg': (info_szz - info_szg).mean(),
+        'diff_sgg_sgz': (info_sgg - info_sgz).mean(),
     })
     return stats
 
 
-@jax.jit
+@eqx.filter_jit
 def get_distances(agent, batch):
     def get_v(o, g):
-        v1, v2 = agent.value(o, g, g)
-        return v1
+        v = eval_ensemble(agent.value_learner.model, o[None], g[None], g[None]).mean(0)
+        return v
+        #v1, v2 = agent.value(o, g, g)
+        #return v1
 
     distances = jax.vmap(jax.vmap(get_v, in_axes=(None, 0)), in_axes=(
         0, None))(batch['observations'], batch['observations'])
 
     def get_density(start, o):
-        v1, v2 = agent.value(start, o, batch['observations'][-1])
-        return v1
+        v = eval_ensemble(agent.value_learner.model, start[None], o[None], batch['observations'][-1][None]).mean(0)
+        return v
+        #v1, v2 = agent.value(start, o, batch['observations'][-1])
+        #return v1
     densities = jax.vmap(jax.vmap(get_density, in_axes=(None, 0)), in_axes=(
         0, None))(batch['observations'], batch['observations'])
 

@@ -3,17 +3,17 @@ from jaxrl_m.typing import *
 import jax
 import jax.numpy as jnp
 import optax
-from jaxrl_m.common import TrainState, TrainTargetStateEQX, target_update, nonpytree_field
+from jaxrl_m.common import TrainTargetStateEQX
 
-import flax
-import flax.linen as nn
 import ml_collections
 
 import equinox as eqx
+import equinox.nn as nn
 from src.icvf_networks import MultilinearVF_EQX
 import dataclasses
+import functools
 
-def expectile_loss(adv, diff, expectile=0.8):
+def expectile_loss(adv, diff, expectile=0.9):
     weight = jnp.where(adv >= 0, expectile, (1 - expectile))
     return weight * diff ** 2
 
@@ -33,7 +33,7 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
     (next_v1_gz, next_v2_gz) = eval_ensemble(target_value_fn, batch['next_observations'], batch['goals'], batch['desired_goals'])
     q1_gz = batch['rewards'] + config['discount'] * batch['masks'] * next_v1_gz
     q2_gz = batch['rewards'] + config['discount'] * batch['masks'] * next_v2_gz
-    q1_gz, q2_gz = jax.lax.stop_gradient(q1_gz), jax.lax.stop_gradient(q2_gz)
+    #q1_gz, q2_gz = jax.lax.stop_gradient(q1_gz), jax.lax.stop_gradient(q2_gz)
 
     (v1_gz, v2_gz) = eval_ensemble(value_fn, batch['observations'], batch['goals'], batch['desired_goals'])
 
@@ -83,71 +83,6 @@ def icvf_loss(value_fn, target_value_fn, batch, config):
         'value_loss2': masked_mean((q1_gz-v1_gz)**2, 1.0 - batch['masks']), # Loss on s = s_+
     }
 
-def periodic_target_update(
-    model: TrainState, target_model: TrainState, period: int
-) -> TrainState:
-    new_target_params = jax.tree_map(
-        lambda p, tp: optax.periodic_update(p, tp, model.step, period),
-        model.params, target_model.params
-    )
-    return target_model.replace(params=new_target_params)
-
-class ICVFAgent(flax.struct.PyTreeNode):
-    rng: jax.random.PRNGKey
-    value: TrainState
-    target_value: TrainState
-    config: dict = nonpytree_field()
-        
-    @jax.jit
-    def update(agent, batch):
-        def value_loss_fn(value_params):
-            value_fn = lambda s, g, z: agent.value(s, g, z, params=value_params)
-            target_value_fn = lambda s, g, z: agent.target_value(s, g, z)
-
-            return icvf_loss(value_fn, target_value_fn, batch, agent.config)
-        
-        if agent.config['periodic_target_update']:
-            new_target_value = periodic_target_update(agent.value, agent.target_value, int(1.0 / agent.config['target_update_rate']))
-        else:
-            new_target_value = target_update(agent.value, agent.target_value, agent.config['target_update_rate'])
-        new_value, value_info = agent.value.apply_loss_fn(loss_fn=value_loss_fn, has_aux=True)
-        return agent.replace(value=new_value, target_value=new_target_value), value_info
-    
-def create_learner(
-                 seed: int,
-                 observations: jnp.ndarray,
-                 value_def: nn.Module,
-                 optim_kwargs: dict = {
-                    'learning_rate': 0.00005,
-                    'eps': 0.0003125
-                 },
-                 discount: float = 0.95,
-                 target_update_rate: float = 0.005,
-                 expectile: float = 0.9,
-                 no_intent: bool = False,
-                 min_q: bool = True,
-                 periodic_target_update: bool = False,
-                **kwargs):
-
-        print('Extra kwargs:', kwargs)
-
-        rng = jax.random.PRNGKey(seed)
-        
-        value_params =  value_def.init(rng, observations, observations, observations).pop('params')
-        value = TrainState.create(value_def, value_params, tx=optax.adam(**optim_kwargs))
-        target_value = TrainState.create(value_def, value_params)
-
-        config = flax.core.FrozenDict(dict(
-            discount=discount,
-            target_update_rate=target_update_rate,
-            expectile=expectile,
-            no_intent=no_intent, 
-            min_q=min_q,
-            periodic_target_update=periodic_target_update,
-        ))
-
-        return ICVFAgent(rng=rng, value=value, target_value=target_value, config=config)
-
 class ICVF_EQX_Agent(eqx.Module):
     value_learner: TrainTargetStateEQX
     config: dict
@@ -160,16 +95,17 @@ def eval_ensemble(ensemble, s, g, z):
 def update(agent, batch):
     (val, value_aux), v_grads = eqx.filter_value_and_grad(icvf_loss, has_aux=True)(agent.value_learner.model, agent.value_learner.target_model, batch, agent.config)
     updated_v_learner = agent.value_learner.apply_updates(v_grads).soft_update()
-    return dataclasses.replace(agent, value_learner=updated_v_learner, config=agent.config), value_aux
+    return dataclasses.replace(agent, value_learner=updated_v_learner), value_aux
     
 def create_eqx_learner(seed: int,
                        observations: jnp.array,
                        hidden_dims: list,
+                       load_pretrained_icvf: bool=False,
                        optim_kwargs: dict = {
                             'learning_rate': 0.00005,
                             'eps': 0.0003125
                         },
-                        discount: float = 0.95,
+                        discount: float = 0.99,
                         target_update_rate: float = 0.005,
                         expectile: float = 0.9,
                         no_intent: bool = False,
@@ -179,10 +115,39 @@ def create_eqx_learner(seed: int,
         print('Extra kwargs:', kwargs)
         rng = jax.random.PRNGKey(seed)
         
+        if load_pretrained_icvf:
+            network_cls_phi = functools.partial(nn.MLP, in_size=observations.shape[-1], out_size=hidden_dims[-1], final_activation=jax.nn.relu,
+                                        width_size=hidden_dims[0], depth=len(hidden_dims))
+            network_cls_psi = functools.partial(nn.MLP, in_size=observations.shape[-1], out_size=hidden_dims[-1], final_activation=jax.nn.relu,
+                                        width_size=hidden_dims[0], depth=len(hidden_dims))
+            network_cls_T = functools.partial(nn.MLP, in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], final_activation=jax.nn.relu,
+                                              depth=len(hidden_dims))
+            loaded_matrix_a = functools.partial(nn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
+            loaded_matrix_b = functools.partial(nn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
+            
+            phi_net = network_cls_phi(key=rng)
+            psi_net = network_cls_psi(key=rng)
+            T_net = network_cls_T(key=rng)
+            matrix_a = loaded_matrix_a(key=rng)
+            matrix_b = loaded_matrix_b(key=rng)
+            loaded_phi_net = eqx.tree_deserialise_leaves("/home/m_bobrin/icvf_release/icvf_model_phi.eqx", phi_net)
+            loaded_psi_net = eqx.tree_deserialise_leaves("/home/m_bobrin/icvf_release/icvf_model_psi.eqx", psi_net)
+            loaded_T_net = eqx.tree_deserialise_leaves("/home/m_bobrin/icvf_release/icvf_model_T.eqx", T_net)
+            loaded_matrix_a = eqx.tree_deserialise_leaves("/home/m_bobrin/icvf_release/icvf_model_a.eqx", matrix_a)
+            loaded_matrix_b = eqx.tree_deserialise_leaves("/home/m_bobrin/icvf_release/icvf_model_b.eqx", matrix_b)
+        else:
+            loaded_phi_net = None
+            loaded_psi_net = None
+            loaded_T_net = None
+            loaded_matrix_a = None
+            loaded_matrix_b = None
+            
         @eqx.filter_vmap
         def ensemblize(keys):
-            return MultilinearVF_EQX(key=keys, state_dim=observations.shape[-1], hidden_dims=hidden_dims)
-        
+            return MultilinearVF_EQX(key=keys, state_dim=observations.shape[-1], hidden_dims=hidden_dims,
+                                     pretrained_phi=loaded_phi_net, pretrained_psi=loaded_psi_net, pretrained_T=loaded_T_net,
+                                     pretrained_a=loaded_matrix_a, pretrained_b=loaded_matrix_b)
+            
         value_learner = TrainTargetStateEQX.create(
             model=ensemblize(jax.random.split(rng, 2)),
             target_model=ensemblize(jax.random.split(rng, 2)),
@@ -205,7 +170,7 @@ def get_default_config():
             'eps': 0.0003125
         }, # LR for vision here. For FC, use standard 1e-3
         'discount': 0.99,
-        'expectile': 0.9,  # The actual tau for expectiles.
+        'expectile': 0.95,  # The actual tau for expectiles.
         'target_update_rate': 0.005,  # For soft target updates.
         'no_intent': False,
         'min_q': True,
