@@ -31,7 +31,10 @@ class GCDataset:
         })
 
     def __post_init__(self):
-        self.terminal_locs, = np.nonzero(self.dataset[self.terminal_key] > 0)
+        (self.terminal_locs)  = np.nonzero(self.dataset[self.terminal_key] > 0)[0]
+        self.terminal_locs = np.concatenate(
+            [self.terminal_locs, [self.dataset['observations'].shape[0] - 1]], axis=0
+        )
         assert np.isclose(self.p_randomgoal + self.p_trajgoal + self.p_currgoal, 1.0)
 
     def sample_goals(self, indx, p_randomgoal=None, p_trajgoal=None, p_currgoal=None):

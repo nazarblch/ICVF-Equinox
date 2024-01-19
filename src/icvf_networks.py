@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import equinox as eqx
 import equinox.nn as eqxnn
 import functools
+import optax
+
 
 class LayerNormMLP(nn.Module):
     hidden_dims: Sequence[int]
@@ -182,12 +184,14 @@ class MultilinearVF_EQX(eqx.Module):
     T_net: eqx.Module
     matrix_a: eqx.Module
     matrix_b: eqx.Module
+    ln1: eqx.Module
+    ln2: eqx.Module
     
     def __init__(self, key, state_dim, hidden_dims, pretrained_phi=None, pretrained_psi=None, pretrained_T=None,pretrained_a=None,pretrained_b=None):
         key, phi_key, psi_key, t_key, matrix_a_key, matrix_b_key = jax.random.split(key, 6)
         
         network_cls = functools.partial(eqxnn.MLP, in_size=state_dim, out_size=hidden_dims[-1],
-                                        width_size=hidden_dims[0], depth=len(hidden_dims), final_activation=jax.nn.relu)
+                                        width_size=hidden_dims[0], depth=len(hidden_dims), final_activation=jax.nn.gelu)
             
         if pretrained_phi is None:
             self.phi_net = network_cls(key=phi_key)
@@ -200,9 +204,12 @@ class MultilinearVF_EQX(eqx.Module):
             self.psi_net = pretrained_psi
         
         T_cls = functools.partial(eqxnn.MLP, in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], depth=len(hidden_dims),
-                                        final_activation=jax.nn.relu)
+                                        final_activation=jax.nn.gelu)
         network_cls_a = functools.partial(eqxnn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
         network_cls_b = functools.partial(eqxnn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
+        
+        self.ln1 = eqxnn.LayerNorm(shape=hidden_dims[-1], use_bias=False, use_weight=False)
+        self.ln2 = eqxnn.LayerNorm(shape=hidden_dims[-1], use_bias=False, use_weight=False)
         
         if pretrained_T is None:
             self.T_net = T_cls(key=t_key)
@@ -219,9 +226,10 @@ class MultilinearVF_EQX(eqx.Module):
         z = self.psi_net(intents)
         Tz = self.T_net(z)
         
-        phi_z = self.matrix_a(Tz * phi) # (1, 256)
-        psi_z = self.matrix_b(Tz * psi) # (1, 256)
+        phi_z = self.ln1(self.matrix_a(phi * Tz)) # (1, 256)
+        psi_z = self.ln2(self.matrix_b(psi * Tz)) # (1, 256)
         v = (phi_z * psi_z).sum(axis=-1)
+        #v = -1 * optax.safe_norm(phi_z - psi_z, 1e-3, axis=-1)
         return v
          
 icvfs = {

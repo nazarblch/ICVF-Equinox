@@ -26,7 +26,7 @@ import wandb
 from ml_collections import config_flags
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'antmaze-large-diverse-v2', 'Environment name.') # antmaze-large-diverse-v2
+flags.DEFINE_string('env_name', 'antmaze-large-play-v2', 'Environment name.') # antmaze-large-diverse-v2
 
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
@@ -74,7 +74,7 @@ def main(_):
     setup_wandb(params_dict, **FLAGS.wandb)
     
     env = d4rl_utils.make_env(FLAGS.env_name)
-    dataset = d4rl_utils.get_dataset(env, normalize_states=False)
+    dataset = d4rl_utils.get_dataset(env)
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
     

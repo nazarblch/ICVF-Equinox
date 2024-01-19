@@ -40,7 +40,11 @@ def get_dataset(env: gym.Env,
                 dones_float[i] = 0
 
         dones_float[-1] = 1
-
+        custom_flip = np.load("/home/m_bobrin/icvf_release_eqx/cheetah_halfup.npy", allow_pickle=True)
+        # dataset['observations'][:5000] = np.tile(custom_flip, reps=(5, 1))
+        # dataset['next_observations'][:5000] = np.tile(np.roll(custom_flip, -1), reps=(5, 1))
+        dataset['observations'][:1000] = custom_flip
+        dataset['next_observations'][:1000] = np.roll(custom_flip, -1, axis=-1)
         return Dataset.create(observations=dataset['observations'].astype(np.float32),
                          actions=dataset['actions'].astype(np.float32),
                          rewards=dataset['rewards'].astype(np.float32),

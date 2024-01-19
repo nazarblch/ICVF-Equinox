@@ -26,14 +26,14 @@ import wandb
 from ml_collections import config_flags
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'door-human-v0', 'Environment name.')
+flags.DEFINE_string('env_name', 'halfcheetah-random-v2', 'Environment name.')
 
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 30_000, 'Visualization interval.')
-flags.DEFINE_integer('save_interval', 100_000, 'Save interval.')
+flags.DEFINE_integer('save_interval', 25_000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1_000_000), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(100_000), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')

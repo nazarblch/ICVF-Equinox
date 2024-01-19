@@ -116,11 +116,11 @@ def create_eqx_learner(seed: int,
         rng = jax.random.PRNGKey(seed)
         
         if load_pretrained_icvf:
-            network_cls_phi = functools.partial(nn.MLP, in_size=observations.shape[-1], out_size=hidden_dims[-1], final_activation=jax.nn.relu,
+            network_cls_phi = functools.partial(nn.MLP, in_size=observations.shape[-1], out_size=hidden_dims[-1], final_activation=jax.nn.gelu,
                                         width_size=hidden_dims[0], depth=len(hidden_dims))
-            network_cls_psi = functools.partial(nn.MLP, in_size=observations.shape[-1], out_size=hidden_dims[-1], final_activation=jax.nn.relu,
+            network_cls_psi = functools.partial(nn.MLP, in_size=observations.shape[-1], out_size=hidden_dims[-1], final_activation=jax.nn.gelu,
                                         width_size=hidden_dims[0], depth=len(hidden_dims))
-            network_cls_T = functools.partial(nn.MLP, in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], final_activation=jax.nn.relu,
+            network_cls_T = functools.partial(nn.MLP, in_size=hidden_dims[-1], out_size=hidden_dims[-1], width_size=hidden_dims[0], final_activation=jax.nn.gelu,
                                               depth=len(hidden_dims))
             loaded_matrix_a = functools.partial(nn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
             loaded_matrix_b = functools.partial(nn.Linear, in_features=hidden_dims[-1], out_features=hidden_dims[-1])
@@ -166,11 +166,11 @@ def create_eqx_learner(seed: int,
 def get_default_config():
     config = ml_collections.ConfigDict({
         'optim_kwargs': {
-            'learning_rate': 0.00005,
+            'learning_rate': 3e-4,
             'eps': 0.0003125
         }, # LR for vision here. For FC, use standard 1e-3
         'discount': 0.99,
-        'expectile': 0.95,  # The actual tau for expectiles.
+        'expectile': 0.9,  # The actual tau for expectiles.
         'target_update_rate': 0.005,  # For soft target updates.
         'no_intent': False,
         'min_q': True,

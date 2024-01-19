@@ -4,7 +4,6 @@ import warnings
 warnings.filterwarnings("ignore")
 os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
 
-import pickle
 from ml_collections import config_flags
 import wandb
 
@@ -26,14 +25,13 @@ import tqdm
 from src import viz_utils as viz
 
 import equinox as eqx
-import equinox.nn as nn
 
 FLAGS = flags.FLAGS
 flags.DEFINE_enum('modality', 'mediumstick', [
                   'gripper', 'shortstick', 'mediumstick', 'longstick'], 'Modality name')
-flags.DEFINE_enum('video_type', 'cross', [
+flags.DEFINE_enum('video_type', 'same', [
                   'same', 'cross', 'all'], 'Type of video data to train on (only modality, all but modality, or all)')
-flags.DEFINE_string('dataset', f'/home/m_bobrin/icvf_release/experiments/xmagical/xmagical_replay',
+flags.DEFINE_string('dataset', f'/home/m_bobrin/icvf_release_eqx/experiments/xmagical/xmagical_replay',
                     'Directory containing datasets')
 
 flags.DEFINE_string('save_dir', f'experiment_output/', 'Logging dir.')
@@ -77,6 +75,8 @@ def main(_):
     setup_wandb(params_dict, **FLAGS.wandb)
     if FLAGS.view_mode:
         keys = ['states', 'next_states', 'rewards', 'masks', 'dones_float']
+    else:
+        keys = None
     if FLAGS.video_type == 'same':
         video_dataset = xmagical.get_dataset(FLAGS.modality, FLAGS.dataset, keys=keys)
     elif FLAGS.video_type == 'cross':
