@@ -3,6 +3,39 @@ import dataclasses
 import numpy as np
 import jax
 import ml_collections
+import equinox as eqx
+import numpy as np
+from functools import partial
+from jax import random
+from ott.tools.k_means import k_means
+from ott.geometry import pointcloud
+from jax import numpy as jnp
+
+@eqx.filter_jit
+@eqx.filter_vmap(in_axes=dict(ensemble=eqx.if_array(0), s=None))
+def eval_ensemble_psi(ensemble, s):
+    return eqx.filter_vmap(ensemble.psi_net)(s)
+
+@eqx.filter_jit
+def kmeans_jax(x, K):
+    geom = pointcloud.PointCloud(x, x)
+    return k_means(geom, K, n_init=5).assignment
+
+@eqx.filter_jit
+def knn_jax(batch_z, all_z, K):
+    distance_matrix = jnp.sum((batch_z[:, None, :] - all_z[None, :, :]) ** 2, axis=-1)
+    return jax.lax.top_k(-distance_matrix, K)[1]
+
+
+def batched_knn(X, K, batch_size=2000):
+    n = X.shape[0]
+    if n > 10_000:
+        nb_ids = [jax.device_get(knn_jax(X[i:i+batch_size], X[:50_000], K)) for i in range(0, n, batch_size)]
+        nb_ids = np.concatenate(nb_ids)
+    else:
+        nb_ids = jax.device_get(knn_jax(X, X, K))
+    return nb_ids
+
 
 @dataclasses.dataclass
 class GCDataset:
@@ -31,8 +64,41 @@ class GCDataset:
         })
 
     def __post_init__(self):
-        self.terminal_locs, = np.nonzero(self.dataset[self.terminal_key] > 0)
+        (self.terminal_locs)  = np.nonzero(self.dataset[self.terminal_key] > 0)[0]
+        self.terminal_locs = np.concatenate(
+            [self.terminal_locs, [self.dataset['observations'].shape[0] - 1]], axis=0
+        )
+        self.assignment = None
         assert np.isclose(self.p_randomgoal + self.p_trajgoal + self.p_currgoal, 1.0)
+
+    def update_intents(self, icvf_model):
+        obs = self.dataset['observations']
+        z = []
+        for i in range(0, obs.shape[0], 50_000):
+            zi = eval_ensemble_psi(icvf_model.value_learner.model, obs[i:i+50_000]).mean(axis=0)
+            z.append(jax.device_get(zi))
+        z = np.concatenate(z, 0)
+        assignment = jax.device_get(kmeans_jax(z, 100))
+
+        self.intents = z
+        self.assignment = assignment
+        self.pos_ids = np.arange(self.assignment.shape[0])
+        print("intents updated")
+        K = 500
+        self.neighbours = np.empty((obs.shape[0], K), dtype=np.int32)
+
+        for c in range(100):
+            mask = (assignment == c)
+            zc = self.intents[mask]
+            # print(c, zc.shape[0])
+            pos = self.pos_ids[mask]
+            self.neighbours[mask] = pos[batched_knn(zc, K).reshape(-1)].reshape(zc.shape[0], K)
+
+        print("neighbours found")
+
+    def sample_from_neighbours(self, indices: np.ndarray):
+        goal_indx = np.random.randint(self.neighbours.shape[1], size=indices.shape[0])
+        return self.neighbours[indices, goal_indx]
 
     def sample_goals(self, indx, p_randomgoal=None, p_trajgoal=None, p_currgoal=None):
         if p_randomgoal is None:
@@ -45,6 +111,11 @@ class GCDataset:
         batch_size = len(indx)
         # Random goals
         goal_indx = np.random.randint(self.dataset.size-self.curr_goal_shift, size=batch_size)
+
+        if self.assignment is not None:
+            goal_indx = self.sample_from_neighbours(indx)
+            # norm = jnp.linalg.norm(self.intents[indx] - self.intents[goal_indx]) 
+            # print(norm)
         
         # Goals from the same trajectory
         final_state_indx = self.terminal_locs[np.searchsorted(self.terminal_locs, indx)]

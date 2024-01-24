@@ -1,8 +1,13 @@
 import os
 import warnings
 
+import sys
+sys.path.append("/home/nazar/projects/AILOT/icvf_release")
+
 warnings.filterwarnings("ignore")
 os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
 
 from absl import app, flags
 from functools import partial
@@ -25,15 +30,18 @@ import wandb
 
 from ml_collections import config_flags
 
+devices = jax.local_devices()
+print(devices)
+
 FLAGS = flags.FLAGS
-flags.DEFINE_string('env_name', 'door-human-v0', 'Environment name.')
+flags.DEFINE_string('env_name', 'halfcheetah-medium-v2', 'Environment name.')
 
 flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 30_000, 'Visualization interval.')
-flags.DEFINE_integer('save_interval', 100_000, 'Save interval.')
+flags.DEFINE_integer('save_interval', 25_000, 'Save interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
-flags.DEFINE_integer('max_steps', int(1_000_000), 'Number of training steps.')
+flags.DEFINE_integer('max_steps', int(500_000), 'Number of training steps.')
 
 flags.DEFINE_enum('icvf_type', 'multilinear', list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
@@ -111,16 +119,18 @@ def main(_):
             wandb.log(visualizations)
             
         if i % FLAGS.save_interval == 0:
+            base_path = "/home/nazar/projects/AILOT/pretrained_icvf/halfcheetah-medium-decomposed/"
+            print("save to", base_path)
             unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
-            with open("icvf_model_phi.eqx", "wb") as f:
+            with open(base_path + "icvf_model_phi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
-            with open("icvf_model_psi.eqx", "wb") as f:
+            with open(base_path +"icvf_model_psi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.psi_net)
-            with open("icvf_model_T.eqx", "wb") as f:
+            with open(base_path +"icvf_model_T.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.T_net)
-            with open("icvf_model_a.eqx", "wb") as f:
+            with open(base_path +"icvf_model_a.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_a)
-            with open("icvf_model_b.eqx", "wb") as f:
+            with open(base_path +"icvf_model_b.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_b)
                 
 

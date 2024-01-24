@@ -4,6 +4,10 @@ import warnings
 warnings.filterwarnings("ignore")
 os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
 
+import sys
+sys.path.append("/home/nazar/projects/AILOT/icvf_release")
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+
 from absl import app, flags
 from functools import partial
 import numpy as np
@@ -32,6 +36,7 @@ flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 50_000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 300_000, 'Save interval.')
+flags.DEFINE_integer('data_update_interval', 50_000, 'Update interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 
@@ -74,7 +79,7 @@ def main(_):
     setup_wandb(params_dict, **FLAGS.wandb)
     
     env = d4rl_utils.make_env(FLAGS.env_name)
-    dataset = d4rl_utils.get_dataset(env, normalize_states=False)
+    dataset = d4rl_utils.get_dataset(env)
     gc_dataset = GCSDataset(dataset, **FLAGS.gcdataset.to_dict())
     example_batch = gc_dataset.sample(1)
     
@@ -89,6 +94,10 @@ def main(_):
     for i in tqdm.tqdm(range(1, FLAGS.max_steps + 1),
                        smoothing=0.1,
                        dynamic_ncols=True):
+        
+        if i % FLAGS.data_update_interval == 100:
+            gc_dataset.update_intents(agent)
+
         batch = gc_dataset.sample(FLAGS.batch_size)  
         agent, update_info = update(agent, batch)
             
@@ -104,16 +113,20 @@ def main(_):
             wandb.log(eval_metrics, step=i)
 
         if i % FLAGS.save_interval == 0:
+
+            base_path = "/home/nazar/projects/AILOT/pretrained_icvf/antmaze-large-diverse-decomposed/"
+            print("save to", base_path)
+
             unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
-            with open("icvf_model_phi_large.eqx", "wb") as f:
+            with open(base_path+"icvf_model_phi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
-            with open("icvf_model_psi_large.eqx", "wb") as f:
+            with open(base_path+"icvf_model_psi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.psi_net)
-            with open("icvf_model_T_large.eqx", "wb") as f:
+            with open(base_path+"icvf_model_T.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.T_net)
-            with open("icvf_model_a_large.eqx", "wb") as f:
+            with open(base_path+"icvf_model_a.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_a)
-            with open("icvf_model_b_large.eqx", "wb") as f:
+            with open(base_path+"icvf_model_b.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_b)
                 
 

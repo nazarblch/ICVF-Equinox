@@ -6,7 +6,8 @@ import optax
 from jaxrl_m.common import TrainTargetStateEQX
 
 import ml_collections
-
+import jax.experimental.mesh_utils as mesh_utils
+import jax.sharding as sharding
 import equinox as eqx
 import equinox.nn as nn
 from src.icvf_networks import MultilinearVF_EQX
@@ -166,11 +167,11 @@ def create_eqx_learner(seed: int,
 def get_default_config():
     config = ml_collections.ConfigDict({
         'optim_kwargs': {
-            'learning_rate': 0.00005,
+            'learning_rate': 3e-4,
             'eps': 0.0003125
         }, # LR for vision here. For FC, use standard 1e-3
         'discount': 0.99,
-        'expectile': 0.95,  # The actual tau for expectiles.
+        'expectile': 0.9,  # The actual tau for expectiles.
         'target_update_rate': 0.005,  # For soft target updates.
         'no_intent': False,
         'min_q': True,

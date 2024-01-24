@@ -29,9 +29,9 @@ import equinox as eqx
 import equinox.nn as nn
 
 FLAGS = flags.FLAGS
-flags.DEFINE_enum('modality', 'mediumstick', [
+flags.DEFINE_enum('modality', 'gripper', [
                   'gripper', 'shortstick', 'mediumstick', 'longstick'], 'Modality name')
-flags.DEFINE_enum('video_type', 'cross', [
+flags.DEFINE_enum('video_type', 'same', [
                   'same', 'cross', 'all'], 'Type of video data to train on (only modality, all but modality, or all)')
 flags.DEFINE_string('dataset', f'/home/m_bobrin/icvf_release/experiments/xmagical/xmagical_replay',
                     'Directory containing datasets')
@@ -48,7 +48,7 @@ flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 flags.DEFINE_enum('icvf_type', 'multilinear',
                   list(icvfs), 'Which model to use.')
 flags.DEFINE_list('hidden_dims', [256, 256], 'Hidden sizes.')
-flags.DEFINE_bool('view_mode', False, 'whether to use pixel based or state based.')
+flags.DEFINE_bool('view_mode', True, 'whether to use pixel based or state based.')
 
 def update_dict(d, additional):
     d.update(additional)
@@ -120,16 +120,18 @@ def main(_):
             wandb.log(eval_metrics, step=i)
             
         if i % FLAGS.save_interval == 0:
+            base_path = "/home/nazar/projects/AILOT/pretrained_icvf/halfcheetah-medium-decomposed/"
+            print("save to", base_path)
             unensemble_model = jax.tree_util.tree_map(lambda x: x[0] if eqx.is_array(x) else x, agent.value_learner.model)
-            with open("icvf_model_phi.eqx", "wb") as f:
+            with open(base_path + "icvf_model_phi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.phi_net)
-            with open("icvf_model_psi.eqx", "wb") as f:
+            with open(base_path + "icvf_model_psi.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.psi_net)
-            with open("icvf_model_T.eqx", "wb") as f:
+            with open(base_path + "icvf_model_T.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.T_net)
-            with open("icvf_model_a.eqx", "wb") as f:
+            with open(base_path + "icvf_model_a.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_a)
-            with open("icvf_model_b.eqx", "wb") as f:
+            with open(base_path + "icvf_model_b.eqx", "wb") as f:
                 eqx.tree_serialise_leaves(f, unensemble_model.matrix_b)
 ###################################################################################################
 #
