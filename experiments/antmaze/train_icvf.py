@@ -36,7 +36,7 @@ flags.DEFINE_integer('seed', np.random.choice(1000000), 'Random seed.')
 flags.DEFINE_integer('log_interval', 1_000, 'Metric logging interval.')
 flags.DEFINE_integer('eval_interval', 50_000, 'Visualization interval.')
 flags.DEFINE_integer('save_interval', 300_000, 'Save interval.')
-flags.DEFINE_integer('data_update_interval', 50_000, 'Update interval.')
+flags.DEFINE_integer('data_update_interval', 25_000, 'Update interval.')
 flags.DEFINE_integer('batch_size', 256, 'Mini batch size.')
 flags.DEFINE_integer('max_steps', int(1e6), 'Number of training steps.')
 
@@ -95,7 +95,7 @@ def main(_):
                        smoothing=0.1,
                        dynamic_ncols=True):
         
-        if i % FLAGS.data_update_interval == 100:
+        if i % FLAGS.data_update_interval == 1000 and i < 200_000:
             gc_dataset.update_intents(agent)
 
         batch = gc_dataset.sample(FLAGS.batch_size)  

@@ -1,3 +1,5 @@
+import torch
+from tqdm import tqdm
 from jaxrl_m.dataset import Dataset
 import dataclasses
 import numpy as np
@@ -30,7 +32,7 @@ def knn_jax(batch_z, all_z, K):
 def batched_knn(X, K, batch_size=2000):
     n = X.shape[0]
     if n > 10_000:
-        nb_ids = [jax.device_get(knn_jax(X[i:i+batch_size], X[:50_000], K)) for i in range(0, n, batch_size)]
+        nb_ids = [jax.device_get(knn_jax(X[i:i+batch_size], X, K)) for i in range(0, n, batch_size)]
         nb_ids = np.concatenate(nb_ids)
     else:
         nb_ids = jax.device_get(knn_jax(X, X, K))
@@ -49,6 +51,7 @@ class GCDataset:
     terminal: bool = True
     max_distance: int = None
     curr_goal_shift: int = 0
+    neighbours_count: int = 3000
 
     @staticmethod
     def get_default_config():
@@ -61,6 +64,7 @@ class GCDataset:
             'terminal': True,
             'max_distance': ml_collections.config_dict.placeholder(int),
             'curr_goal_shift': 0,
+            'neighbours_count': 3000
         })
 
     def __post_init__(self):
@@ -68,31 +72,37 @@ class GCDataset:
         self.terminal_locs = np.concatenate(
             [self.terminal_locs, [self.dataset['observations'].shape[0] - 1]], axis=0
         )
-        self.assignment = None
+        self.intents = None
         assert np.isclose(self.p_randomgoal + self.p_trajgoal + self.p_currgoal, 1.0)
 
     def update_intents(self, icvf_model):
         obs = self.dataset['observations']
+        N = obs.shape[0]
         z = []
-        for i in range(0, obs.shape[0], 50_000):
+        for i in range(0, N, 50_000):
             zi = eval_ensemble_psi(icvf_model.value_learner.model, obs[i:i+50_000]).mean(axis=0)
             z.append(jax.device_get(zi))
         z = np.concatenate(z, 0)
-        assignment = jax.device_get(kmeans_jax(z, 100))
+        # NC = 50
+        # assignment = jax.device_get(kmeans_jax(z, NC))
 
         self.intents = z
-        self.assignment = assignment
-        self.pos_ids = np.arange(self.assignment.shape[0])
+        # self.assignment = assignment
+        # pos_ids = np.arange(N)
         print("intents updated")
-        K = 500
-        self.neighbours = np.empty((obs.shape[0], K), dtype=np.int32)
+        # K = np.min([(assignment == c).astype(np.int32).sum() for c in range(NC)] + [3000]) - 1
+        K=self.neighbours_count
+        self.neighbours = np.empty((N, K), dtype=np.int32)
 
-        for c in range(100):
-            mask = (assignment == c)
-            zc = self.intents[mask]
-            # print(c, zc.shape[0])
-            pos = self.pos_ids[mask]
-            self.neighbours[mask] = pos[batched_knn(zc, K).reshape(-1)].reshape(zc.shape[0], K)
+        for c in tqdm(range(0, N, 50_000)):
+            to = c+50_000
+            if to + K >= N:
+                to = to + K
+            zc = self.intents[c:to]
+            self.neighbours[c:to] = batched_knn(zc, K) + c
+
+            if to >= N:
+                break
 
         print("neighbours found")
 
@@ -112,7 +122,7 @@ class GCDataset:
         # Random goals
         goal_indx = np.random.randint(self.dataset.size-self.curr_goal_shift, size=batch_size)
 
-        if self.assignment is not None:
+        if self.intents is not None:
             goal_indx = self.sample_from_neighbours(indx)
             # norm = jnp.linalg.norm(self.intents[indx] - self.intents[goal_indx]) 
             # print(norm)
@@ -166,6 +176,7 @@ class GCSDataset(GCDataset):
             'intent_sametraj': False,
             'max_distance': ml_collections.config_dict.placeholder(int),
             'curr_goal_shift': 0,
+            'neighbours_count': 3000
         })
 
     def sample(self, batch_size: int, indx=None):
